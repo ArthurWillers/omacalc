@@ -16,6 +16,7 @@ const QString plusSign = QStringLiteral("+");
 const QString minusSign = QStringLiteral("−");
 const QString multiplySign = QStringLiteral("×");
 const QString divideSign = QStringLiteral("÷");
+const QString powerSign = QStringLiteral("^");
 
 // A leading # is a bare hex color rather than a comment.
 QString withoutTomlComment(const QString &text) {
@@ -42,7 +43,8 @@ QString withoutTomlComment(const QString &text) {
 
 bool isOperator(const QString &token) {
     return token == plusSign || token == minusSign
-        || token == multiplySign || token == divideSign;
+        || token == multiplySign || token == divideSign
+        || token == powerSign;
 }
 
 // Digits are entered raw, so "5." and "-" can linger while typing. Seal them
@@ -126,6 +128,8 @@ void Backend::pressKey(const QString &key) {
         pressOperator(multiplySign);
     } else if (key == QStringLiteral("/") || key == divideSign) {
         pressOperator(divideSign);
+    } else if (key == QStringLiteral("^")) {
+        pressOperator(powerSign);
     } else if (key == QStringLiteral("=")) {
         pressEquals();
     } else if (key == QStringLiteral("%")) {
@@ -239,8 +243,8 @@ void Backend::pressEquals() {
 }
 
 // iOS-style percent: with a pending + or −, x% means x percent of the running
-// total, so 200 + 10 % = gives 220. With × or ÷ (or on its own) x% is simply
-// x ÷ 100, so 200 × 10 % = gives 20.
+// total, so 200 + 10 % = gives 220. With ×, ÷, or ^ (or on its own) x% is
+// simply x ÷ 100, so 200 × 10 % = gives 20.
 void Backend::pressPercent() {
     if (m_errored)
         return;
@@ -333,10 +337,8 @@ double Backend::evaluateTokens(const QStringList &tokens, bool *ok) {
     if (tokens.size() % 2 == 0)
         return 0;
 
-    // First fold × and ÷ into their neighbors, then sum what remains, giving
-    // multiplication its usual precedence over addition.
     QList<double> values;
-    QStringList additiveOperators;
+    QStringList operators;
 
     bool numberOk = false;
     values << QLocale::c().toDouble(tokens.first(), &numberOk);
@@ -348,23 +350,53 @@ double Backend::evaluateTokens(const QStringList &tokens, bool *ok) {
         const double operand = QLocale::c().toDouble(tokens.at(i + 1), &numberOk);
         if (!numberOk || !isOperator(op))
             return 0;
+        operators << op;
+        values << operand;
+    }
 
+    // Fold ^ right-to-left so 2 ^ 3 ^ 2 is 2^(3^2), not (2^3)^2. Then fold ×
+    // and ÷ left-to-right, then + and −.
+    for (int i = operators.size() - 1; i >= 0; --i) {
+        if (operators.at(i) != powerSign)
+            continue;
+
+        const double base = values.at(i);
+        const double exponent = values.at(i + 1);
+        // A negative base with a fractional exponent has no real result.
+        if (base < 0.0 && std::floor(exponent) != exponent)
+            return 0;
+
+        const double powered = std::pow(base, exponent);
+        if (!std::isfinite(powered))
+            return 0;
+
+        values[i] = powered;
+        values.removeAt(i + 1);
+        operators.removeAt(i);
+    }
+
+    QList<double> additiveValues;
+    QStringList additiveOperators;
+    additiveValues << values.first();
+    for (int i = 0; i < operators.size(); ++i) {
+        const QString &op = operators.at(i);
+        const double operand = values.at(i + 1);
         if (op == multiplySign) {
-            values.last() *= operand;
+            additiveValues.last() *= operand;
         } else if (op == divideSign) {
-            values.last() /= operand;
+            additiveValues.last() /= operand;
         } else {
             additiveOperators << op;
-            values << operand;
+            additiveValues << operand;
         }
     }
 
-    double total = values.first();
+    double total = additiveValues.first();
     for (int i = 0; i < additiveOperators.size(); ++i) {
         if (additiveOperators.at(i) == plusSign)
-            total += values.at(i + 1);
+            total += additiveValues.at(i + 1);
         else
-            total -= values.at(i + 1);
+            total -= additiveValues.at(i + 1);
     }
 
     if (!std::isfinite(total))
