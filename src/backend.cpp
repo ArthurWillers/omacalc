@@ -17,6 +17,29 @@ const QString minusSign = QStringLiteral("−");
 const QString multiplySign = QStringLiteral("×");
 const QString divideSign = QStringLiteral("÷");
 
+// A leading # is a bare hex color rather than a comment.
+QString withoutTomlComment(const QString &text) {
+    const QString value = text.trimmed();
+    QChar quote;
+    bool escaped = false;
+    for (int i = 0; i < value.size(); ++i) {
+        const QChar character = value.at(i);
+        if (escaped) {
+            escaped = false;
+        } else if (quote == QLatin1Char('"') && character == QLatin1Char('\\')) {
+            escaped = true;
+        } else if (!quote.isNull() && character == quote) {
+            quote = QChar();
+        } else if (quote.isNull() && (character == QLatin1Char('"')
+                                      || character == QLatin1Char('\''))) {
+            quote = character;
+        } else if (quote.isNull() && character == QLatin1Char('#') && i > 0) {
+            return value.left(i).trimmed();
+        }
+    }
+    return value.trimmed();
+}
+
 bool isOperator(const QString &token) {
     return token == plusSign || token == minusSign
         || token == multiplySign || token == divideSign;
@@ -437,14 +460,13 @@ void Backend::setTextScale(qreal textScale) {
 }
 
 void Backend::loadOmarchyTheme() {
-    m_themeBackground = m_darkMode ? QStringLiteral("#101010") : QStringLiteral("#ffffff");
-    m_themeForeground = m_darkMode ? QStringLiteral("#eeeeee") : QStringLiteral("#222324");
-    m_themeAccent = m_darkMode ? QStringLiteral("#5584aa") : QStringLiteral("#2077b2");
-    m_themeSelection = m_darkMode ? QStringLiteral("#186a9a") : QStringLiteral("#2077b2");
-
     const QString colorsPath = QDir::homePath()
         + QStringLiteral("/.local/state/omarchy/current/theme/colors.toml");
     QString themeMode;
+    QString themeBackground;
+    QString themeForeground;
+    QString themeAccent;
+    QString themeSelection;
     QFile file(colorsPath);
     if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         QTextStream in(&file);
@@ -458,7 +480,7 @@ void Backend::loadOmarchyTheme() {
                 continue;
 
             const QString key = line.left(equals).trimmed();
-            QString value = line.mid(equals + 1).trimmed();
+            QString value = withoutTomlComment(line.mid(equals + 1));
             if (value.size() >= 2
                     && ((value.front() == QLatin1Char('"') && value.back() == QLatin1Char('"'))
                         || (value.front() == QLatin1Char('\'') && value.back() == QLatin1Char('\''))))
@@ -466,14 +488,14 @@ void Backend::loadOmarchyTheme() {
 
             if (key == QStringLiteral("mode"))
                 themeMode = value;
-            else if (key == QStringLiteral("background"))
-                m_themeBackground = value;
-            else if (key == QStringLiteral("foreground"))
-                m_themeForeground = value;
-            else if (key == QStringLiteral("accent"))
-                m_themeAccent = value;
-            else if (key == QStringLiteral("selection"))
-                m_themeSelection = value;
+            else if (key == QStringLiteral("background") && QColor(value).isValid())
+                themeBackground = value;
+            else if (key == QStringLiteral("foreground") && QColor(value).isValid())
+                themeForeground = value;
+            else if (key == QStringLiteral("accent") && QColor(value).isValid())
+                themeAccent = value;
+            else if (key == QStringLiteral("selection") && QColor(value).isValid())
+                themeSelection = value;
         }
     }
 
@@ -486,7 +508,7 @@ void Backend::loadOmarchyTheme() {
         themeIsDark = false;
         themeModeKnown = true;
     } else {
-        const QColor background(m_themeBackground);
+        const QColor background(themeBackground);
         if (background.isValid()) {
             const double luminance = 0.299 * background.redF()
                 + 0.587 * background.greenF() + 0.114 * background.blueF();
@@ -498,6 +520,15 @@ void Backend::loadOmarchyTheme() {
         m_darkMode = themeIsDark;
         emit darkModeChanged();
     }
+
+    m_themeBackground = themeBackground.isEmpty()
+        ? (m_darkMode ? QStringLiteral("#101010") : QStringLiteral("#ffffff")) : themeBackground;
+    m_themeForeground = themeForeground.isEmpty()
+        ? (m_darkMode ? QStringLiteral("#eeeeee") : QStringLiteral("#222324")) : themeForeground;
+    m_themeAccent = themeAccent.isEmpty()
+        ? (m_darkMode ? QStringLiteral("#5584aa") : QStringLiteral("#2077b2")) : themeAccent;
+    m_themeSelection = themeSelection.isEmpty()
+        ? (m_darkMode ? QStringLiteral("#186a9a") : QStringLiteral("#2077b2")) : themeSelection;
 
     emit themeColorsChanged();
 }

@@ -312,11 +312,11 @@ private slots:
         QFile colorsFile(themeDirectory + QStringLiteral("/colors.toml"));
         QVERIFY(colorsFile.open(QIODevice::WriteOnly | QIODevice::Text));
         const QByteArray palette(
-            "mode = \"light\"\n"
-            "accent = \"#112233\"\n"
-            "selection = \"#445566\"\n"
-            "background = \"#fefefe\"\n"
-            "foreground = \"#101010\"\n");
+            "mode = \"light\" # a light theme\n"
+            "accent = \"#112233\" # button accent\n"
+            "selection = \"#445566\" # selection color\n"
+            "background = \"#fefefe\" # canvas\n"
+            "foreground = \"#101010\" # text\n");
         QCOMPARE(colorsFile.write(palette), qint64(palette.size()));
         colorsFile.close();
 
@@ -326,6 +326,21 @@ private slots:
         QCOMPARE(calculator.themeAccent(), QStringLiteral("#112233"));
         QCOMPARE(calculator.themeSelection(), QStringLiteral("#445566"));
         QVERIFY(!calculator.darkMode());
+
+        QVERIFY(colorsFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text));
+        const QByteArray invalidPalette(
+            "mode = \"light\"\n"
+            "background = \"not a color\" # invalid canvas\n"
+            "foreground = #101010 # bare hex text\n");
+        QCOMPARE(colorsFile.write(invalidPalette), qint64(invalidPalette.size()));
+        colorsFile.close();
+
+        Backend withInvalidColor;
+        QCOMPARE(withInvalidColor.themeBackground(), QStringLiteral("#ffffff"));
+        QCOMPARE(withInvalidColor.themeForeground(), QStringLiteral("#101010"));
+        QCOMPARE(withInvalidColor.themeAccent(), QStringLiteral("#2077b2"));
+        QCOMPARE(withInvalidColor.themeSelection(), QStringLiteral("#2077b2"));
+        QVERIFY(!withInvalidColor.darkMode());
     }
 
 private:
