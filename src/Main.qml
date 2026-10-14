@@ -125,6 +125,7 @@ ApplicationWindow {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 horizontalAlignment: Text.AlignRight
+                verticalAlignment: Text.AlignBottom
                 text: backend.display
                 color: win.inkColor
                 fontSizeMode: Text.HorizontalFit
