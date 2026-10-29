@@ -221,6 +221,77 @@ private slots:
         QCOMPARE(calculator.display(), QStringLiteral("9"));
     }
 
+    void copiesResult() {
+        QTemporaryDir helperDir;
+        QVERIFY(helperDir.isValid());
+
+        const QString logPath = helperDir.path() + QStringLiteral("/copies.log");
+        const QString slowMarkerPath = helperDir.path() + QStringLiteral("/slow-once");
+        const QString scriptPath = helperDir.path() + QStringLiteral("/fake-wl-copy.sh");
+        QFile script(scriptPath);
+        QVERIFY(script.open(QIODevice::WriteOnly | QIODevice::Text));
+        const QByteArray scriptBody =
+            "#!/usr/bin/env sh\n"
+            "if [ \"$2\" = \"0\" ]; then sleep 0.08; fi\n"
+            "if [ \"$2\" = \"99\" ] && [ ! -e \"" + slowMarkerPath.toUtf8() + "\" ]; then\n"
+            "  : > \"" + slowMarkerPath.toUtf8() + "\"\n"
+            "  sleep 1\n"
+            "fi\n"
+            "printf '%s|%s\\n' \"$1\" \"$2\" >> \"" + logPath.toUtf8() + "\"\n";
+        QCOMPARE(script.write(scriptBody), qint64(scriptBody.size()));
+        script.close();
+        QVERIFY(script.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                                      | QFileDevice::ExeOwner));
+
+        Backend calculator;
+        calculator.setWaylandClipboardHelper(scriptPath);
+        QClipboard *clipboard = QGuiApplication::clipboard();
+
+        // Trigger three copies while the first slow helper is still running;
+        // intermediate queued values collapse to the latest so an older helper
+        // never finishes after and overwrites the newest copy.
+        calculator.copyResult();
+        QCOMPARE(clipboard->text(), QStringLiteral("0"));
+
+        press(calculator, "6 × 7 =");
+        calculator.copyResult();
+        QCOMPARE(clipboard->text(), QStringLiteral("42"));
+
+        press(calculator, "sign");
+        calculator.copyResult();
+        QCOMPARE(clipboard->text(), QStringLiteral("-42"));
+
+        QTRY_VERIFY_WITH_TIMEOUT([&]() {
+            QFile logFile(logPath);
+            if (!logFile.open(QIODevice::ReadOnly | QIODevice::Text))
+                return false;
+            const QStringList lines = QString::fromUtf8(logFile.readAll())
+                .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+            return lines == QStringList({QStringLiteral("--|0"), QStringLiteral("--|-42")});
+        }(), 1000);
+
+        // If the window closes before an in-flight helper finishes, the
+        // destructor terminates the unfinished child and hands the active copy
+        // off via startDetached so the result is not lost.
+        {
+            Backend closingCalculator;
+            closingCalculator.setWaylandClipboardHelper(scriptPath);
+            press(closingCalculator, "9 9");
+            closingCalculator.copyResult();
+        }
+
+        QTRY_VERIFY_WITH_TIMEOUT([&]() {
+            QFile logFile(logPath);
+            if (!logFile.open(QIODevice::ReadOnly | QIODevice::Text))
+                return false;
+            const QStringList lines = QString::fromUtf8(logFile.readAll())
+                .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+            return lines == QStringList({QStringLiteral("--|0"),
+                                         QStringLiteral("--|-42"),
+                                         QStringLiteral("--|99")});
+        }(), 1000);
+    }
+
     void pastesNumbers() {
         Backend calculator;
         QClipboard *clipboard = QGuiApplication::clipboard();
